@@ -20,16 +20,17 @@
 //   BOTH the lecturer/course combination and the course as a whole.
 
 // === Domain model - fill in the blanks ===
-// There are 4 models: courses, lecturers, sections, reviews
+// There are 4 models: lecturers, courses, reviews, and experience
 // There is one many-to-many relationship: courses <-> lecturers, which translates to two one-to-many relationships:
-// - One-to-many: courses -> sections
-// - One-to-many: lecturers -> sections
-// And one more one-to-many: sections -> reviews
+// - One-to-many: lecturer -> sections
+// - One-to-many: courses -> section
+// And one more one-to-many: section -> reviews
 // Therefore:
-// - The first model, courses, contains the following fields: courseNumber, name
-// - The second model, lecturers, contains the following fields: name
-// - The third model, sections, contains the following fields: courseId, lecturerId
-// - The fourth model, reviews, contains the following fields, sectionId, body, rating
+// - The first model, courses, contains the following fields (not including ID): course number, course name 
+// - The second model, lecturer, contains the following fields: lecturer name
+// - The third model, section, contains the following fields: course ID, lecturer ID
+// - The fourth model, reviews, contains the following fields: comments, rating, section ID
+
 
 // allows us to use firebase
 let firebase = require(`./firebase`)
@@ -44,57 +45,108 @@ exports.handler = async function(event) {
   let db = firebase.firestore()
 
   // ask Firebase for the course that corresponds to the course number, wait for the response
-  let courseQuery = await db.collection('courses').where(`courseNumber`, `==`, courseNumber).get()
+  let coursesQuery = await db.collection(`courses`).where(`courseNum`,`==`,courseNumber).get()
 
   // get the first document from the query
-  let course = courseQuery.docs[0]
-
+  let courses = coursesQuery.docs[0]
+  
   // get the id from the document
-  let courseId = course.id
+  let courseId = courses.id
 
   // get the data from the document
-  let courseData = course.data()
-
-  // create an object with the course data to hold the return value from our lambda
-  let returnValue = {
-    courseNumber: courseData.courseNumber,
-    name: courseData.name
+  let courseData = courses.data()
+  
+  // set a new Array as part of the return value
+  returnValue = {
+    courseNumber: courseData.courseNum,
+    courseName: courseData.courseName,
+    avgClassRating: 0,
+    totalNumOfReviews: 0,
+    lecturers: []
   }
 
-  // set a new Array as part of the return value
-  returnValue.sections = []
-
   // ask Firebase for the sections corresponding to the Document ID of the course, wait for the response
-  let sectionsQuery = await db.collection('sections').where(`courseId`, `==`, courseId).get()
+  let sectionsQuery = await db.collection(`sections`).where(`courseId`,`==`,courseId).get()
 
   // get the documents from the query
   let sections = sectionsQuery.docs
 
-  // loop through the documents
-  for (let i=0; i < sections.length; i++) {
-    // get the document ID of the section
-    let sectionId = sections[i].id
+  // Start counters for average class rating
+  sumClassRating = 0
+  sumClassReviews = 0
 
-    // get the data from the section
-    let sectionData = sections[i].data()
+  // Loop through all the sections
+  for (sectionIndex = 0; sectionIndex < sections.length;sectionIndex++) {
+  // get the document ID of the section
+    sectionId = sections[sectionIndex].id
     
-    // create an Object to be added to the return value of our lambda
-    let sectionObject = {}
-
+    // get the data from the section
+    sectionData = sections[sectionIndex].data()
+    
     // ask Firebase for the lecturer with the ID provided by the section; hint: read "Retrieve One Document (when you know the Document ID)" in the reference
-    let lecturerQuery = await db.collection('lecturers').doc(sectionData.lecturerId).get()
-
+    let lecturerQuery = await db.collection(`lecturers`).doc(sectionData.lectId).get() // pull the lecturer name using the lecturer ID in the section which we've already pulled
+        
     // get the data from the returned document
-    let lecturer = lecturerQuery.data()
-
-    // add the lecturer's name to the section Object
-    sectionObject.lecturerName = lecturer.name
-
-    // add the section Object to the return value
-    returnValue.sections.push(sectionObject)
+    let lectData = lecturerQuery.data()
+    
+    // Set up a blank array to fill with section specific info and add lecturers name to it
+   
+    let sectionObject = {
+    lecturer: lectData.lectName,
+    avgLectRating: 0,
+    sectionNumOfReviews: 0,
+    reviews: []
+      }
 
     // 🔥 your code for the reviews/ratings goes here
+    // Now begin process of populating sectionObject with all relevant reviews
+
+    // get the reviews for this lecturer/section, wait for it to return, store in memory
+    let reviewsQuery = await db.collection(`reviews`).where(`sectionId`,`==`,sectionId).get()
+    
+    // get the documents from the query
+    let reviews = reviewsQuery.docs
+    
+    // Set up counters for average lecturer/class rating
+ 
+  sumSectionRating = 0
+  sumSectionReviews = 0
+
+    // loop through the review documents
+    for(let reviewIndex=0; reviewIndex < reviews.length;reviewIndex++) {
+      // get the id from the review document
+      let reviewId = reviews[reviewIndex].id
+    
+      // get the data from the review document
+      let reviewData = reviews[reviewIndex].data()
+
+      // create an Object to be added to the reviews Array of the post
+      let reviewObject = {
+        rating: reviewData.rating,
+        body: reviewData.body
+      }
+      
+      //Add to the total scores in reviews
+      sumSectionRating = sumSectionRating + reviewData.rating
+      sumClassRating = sumClassRating + reviewData.rating
+      //Add to the number of reviews
+      sumSectionReviews ++
+      sumClassReviews ++
+
+      // add the review to the SectionObject
+      sectionObject.reviews.push(reviewObject)
+    }
+    // Add the average rating score and number of reviews to the sectionObject once out of the loop
+    sectionObject.avgLectRating=sumSectionRating/sumSectionReviews
+    sectionObject.sectionNumOfReviews = sumSectionReviews
+
+    //Send the filled sectionObject to the returnValue
+    returnValue.lecturers.push(sectionObject)
+  
   }
+  //Caclulate the overall adverage rating and number of reviews and add to returnValue
+  returnValue.avgClassRating = sumClassRating/sumClassReviews
+  returnValue.totalNumOfReviews = sumClassReviews
 
   // return the standard response
   return {
